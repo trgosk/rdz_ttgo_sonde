@@ -99,6 +99,8 @@ typedef struct st_sondeinfo {
 	// shut down timers, currently only for RS41; -1=disabled
 	int16_t launchKT, burstKT, countKT;
 	uint16_t crefKT; // frame number in which countKT was last sent
+	uint8_t raw[320];
+	uint16_t rawLen;
 } SondeInfo;
 // rxStat: 3=undef[empty] 1=timeout[.] 2=errro[E] 0=ok[|] 4=no valid position[°]
 
@@ -152,6 +154,7 @@ struct st_feedinfo {
         int highrate;
         int lowlimit;
         int idformat;   // 0: dxl  1: real  2: auto
+		int json;
 };
 
 // maybe extend for external Bluetooth interface?

@@ -329,6 +329,9 @@ int M10M20::decodeframeM10(uint8_t *data) {
                         // subtracting 86400 yields 315878400UL
                 sonde.si()->time = (gpstime/1000) + 86382 + gpsweek*604800 + 315878400UL;
                 sonde.si()->validTime = true;
+		
+		sonde.si()->rawLen = M10_FRAMELEN;
+		memcpy(sonde.si()->raw, data, M10_FRAMELEN);
 	} else {
 		Serial.printf("data is %02x %02x %02x\n", data[0], data[1], data[2]);
 		return 0;
@@ -424,18 +427,18 @@ int M10M20::receive() {
       			processM10data(data);
       			value = sx1278.readRegister(REG_IRQ_FLAGS2);
     		} else {
-			if(headerDetected) {
-				t0 = millis(); // restart timer... don't time out if header detected...
-				headerDetected = 0;
-			}
-    			if(haveNewFrame) {
-				Serial.printf("M10M20::receive(): new frame complete after %ldms\n", millis()-t0);
-				printRaw(dataptr, M10_FRAMELEN);
-				int retval = haveNewFrame==1 ? RX_OK: RX_ERROR;
-				haveNewFrame = 0;
-				return retval;
-			}
-			delay(2);
+				if(headerDetected) {
+					t0 = millis(); // restart timer... don't time out if header detected...
+					headerDetected = 0;
+				}
+				if(haveNewFrame) {
+					Serial.printf("M10M20::receive(): new frame complete after %ldms\n", millis()-t0);
+					printRaw(dataptr, M10_FRAMELEN);
+					int retval = haveNewFrame==1 ? RX_OK: RX_ERROR;
+					haveNewFrame = 0;
+					return retval;
+				}
+				delay(2);
     		}
     	}
                        int32_t afc = sx1278.getAFC();
@@ -558,6 +561,10 @@ int M10M20::decodeframeM20(uint8_t *data) {
                 
         sonde.si()->validTime = true;
 	}
+
+	sonde.si()->rawLen = 69+1;
+	memcpy(sonde.si()->raw, data, 69+1);
+
 	return crcok?1:2;
 }
 

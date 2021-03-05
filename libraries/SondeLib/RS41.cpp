@@ -482,6 +482,8 @@ int RS41::decode41(byte *data, int maxlen)
 		p += len;
 		Serial.println();
 	}
+   sonde.si()->rawLen = RS41MAXLEN;
+	memcpy(sonde.si()->raw, data, RS41MAXLEN);
 	return crcok ? 0 : -1;
 }
 void RS41::printRaw(uint8_t *data, int len)

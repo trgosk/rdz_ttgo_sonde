@@ -503,9 +503,10 @@ struct st_configitems config_list[] = {
   {"kisstnc.active", "KISS TNC (port 14590) (needs reboot)", 0, &sonde.config.kisstnc.active},
   {"kisstnc.idformat", "KISS TNC ID Format", -2, &sonde.config.kisstnc.idformat},
   /* AXUDP settings */
-  {"axudp.active", "AXUDP active", -3, &sonde.config.udpfeed.active},
+  {"axudp.active", "AXUDP active", 0, &sonde.config.udpfeed.active},
   {"axudp.host", "AXUDP Host", 63, sonde.config.udpfeed.host},
   {"axudp.port", "AXUDP Port", 0, &sonde.config.udpfeed.port},
+  {"axudp.jsn", "AXUDP Json", 0, &sonde.config.udpfeed.json},
   {"axudp.idformat", "DFM ID Format", -2, &sonde.config.udpfeed.idformat},
   {"axudp.highrate", "Rate limit", 0, &sonde.config.udpfeed.highrate},
   /* APRS TCP settings, current not used */
@@ -1745,6 +1746,20 @@ void enterMode(int mode) {
   }
 }
 
+bool to_hex(char* dest, size_t dest_len, const uint8_t* values, size_t val_len) {
+    static const char hex_table[] = "0123456789ABCDEF";
+    if(dest_len < (val_len*2+1)) /* check that dest is large enough */
+        return false;
+    while(val_len--) {
+        /* shift down the top nibble and pick a char from the hex_table */
+        *dest++ = hex_table[*values >> 4];
+        /* extract the bottom nibble and pick a char from the hex_table */
+        *dest++ = hex_table[*values++ & 0xF];
+    }
+    *dest = 0;
+    return true;
+}
+
 static char text[40];
 static const char *action2text(uint8_t action) {
   if (action == ACT_DISPLAY_DEFAULT) return "Default Display";
@@ -1809,13 +1824,86 @@ void loopDecoder() {
 
     if (s->validID && ((s->validPos & 0x03) == 0x03)) {
       const char *str = aprs_senddata(s, sonde.config.call, sonde.config.udpfeed.symbol);
-      if (connected)  {
+      if (connected && sonde.config.udpfeed.json != 1)  {
         char raw[201];
         int rawlen = aprsstr_mon2raw(str, raw, APRS_MAXLEN);
         Serial.println("Sending AXUDP");
         //Serial.println(raw);
         udp.beginPacket(sonde.config.udpfeed.host, sonde.config.udpfeed.port);
         udp.write((const uint8_t *)raw, rawlen);
+        udp.endPacket();
+      }
+      if (connected && sonde.config.udpfeed.json == 1)  {
+        // create json raw frame
+        char jsn[1024];
+        char rawframe[640+1];
+        to_hex(rawframe, sizeof(rawframe), s->raw, s->rawLen);
+        const char *typestr = s->typestr;
+        if(*typestr==0) typestr = sondeTypeStr[s->type];
+        int len = snprintf(jsn, 1024, 
+          "{"
+          "\"frame\": %d, "
+          "\"id\": \"%s\", "
+          "\"lat\": %.5f, "
+          "\"lon\": %.5f, "
+          "\"alt\": %.1f, "
+          "\"type\": \"%s\", "
+          "\"freq\": %.2f, "
+          "\"raw\": \"%s\""
+          // "\"res\": %d, "
+          // "\"active\": %d, "
+          // "\"ser\": \"%s\", "
+          // "\"validId\": %d, "
+          // "\"launchsite\": \"%s\", "
+          // "\"vs\": %.1f, "
+          // "\"hs\": %.1f, "
+          // "\"dir\": %.1f, "
+          // "\"sats\": %d, "
+          // "\"validPos\": %d, "
+          // "\"time\": %d, "
+          // "\"sec\": %d, "
+          // "\"validTime\": %d, "
+          // "\"rssi\": %d, "
+          // "\"afc\": %d, "
+          // "\"launchKT\": %d, "
+          // "\"burstKT\": %d, "
+          // "\"countKT\": %d, "
+          // "\"crefKT\": %d"
+          "}",
+
+          s->frame,
+          s->ser,
+          s->lat,
+          s->lon,
+          s->alt,
+          typestr,
+          s->freq,
+          rawframe
+          // ,res&0xff
+          // ,(int)s->active
+          // ,s->id
+          // ,(int)s->validID
+          // ,s->launchsite
+          // ,s->vs
+          // ,s->hs
+          // ,s->dir
+          // ,s->sats
+          // ,s->validPos
+          // ,s->time
+          // ,s->sec
+          // ,(int)s->validTime
+          // ,s->rssi
+          // ,s->afc
+          // ,s->launchKT
+          // ,s->burstKT
+          // ,s->countKT
+          // ,s->crefKT
+        );
+
+        Serial.println("Sending JSONUDP");
+        //Serial.println(raw);
+        udp.beginPacket(sonde.config.udpfeed.host, sonde.config.udpfeed.port);
+        udp.write((const uint8_t *)jsn, len);
         udp.endPacket();
       }
       if (tncclient.connected()) {

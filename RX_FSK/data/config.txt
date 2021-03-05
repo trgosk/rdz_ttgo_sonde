@@ -88,6 +88,7 @@ axudp.port=9002
 axudp.symbol=/O
 axudp.highrate=1
 axudp.idformat=0
+axudp.jsn=0
 #-------------------------------#
 # maybe some time in the future
 #-------------------------------#

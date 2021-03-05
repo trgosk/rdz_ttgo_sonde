@@ -187,6 +187,7 @@ void Sonde::defaultConfig() {
 	config.udpfeed.port = 9002;
 	config.udpfeed.highrate = 1;
 	config.udpfeed.idformat = ID_DFMGRAW;
+	config.udpfeed.json = 0;
 	config.tcpfeed.active = 0;
 	config.tcpfeed.type = 1;
 	strcpy(config.tcpfeed.host, "radiosondy.info");
@@ -321,6 +322,8 @@ void Sonde::setConfig(const char *cfg) {
 		config.udpfeed.highrate = atoi(val);
 	} else if(strcmp(cfg,"axudp.idformat")==0) {
 		config.udpfeed.idformat = atoi(val);
+	} else if(strcmp(cfg,"axudp.jsn")==0) {
+	 	config.udpfeed.json = atoi(val);
 	} else if(strcmp(cfg,"tcp.active")==0) {
 		config.tcpfeed.active = atoi(val)>0;
 	} else if(strcmp(cfg,"tcp.host")==0) {

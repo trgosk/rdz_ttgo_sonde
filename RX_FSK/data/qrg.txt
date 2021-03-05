@@ -1,5 +1,5 @@
 # Frequency in Mhz (format nnn.nnn)
-# Type (4=RS41, 6=DFM normal, DFM-06, 9=DFM inverted, DFM-09)
+# Type (M=M10, 2=M20, 4=RS41, 6=DFM6 (old), 9=DFMDFM9 (old), D=DFM)
 #
 402.300 4 + Greifswald
 402.500 4 - Schleswig
