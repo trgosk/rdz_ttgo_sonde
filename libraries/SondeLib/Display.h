@@ -1,3 +1,4 @@
+#define ALT9225
 
 #ifndef Display_h
 #define Display_h
@@ -6,9 +7,23 @@
 #define FONT_SMALL 0
 
 #include <SPI.h>
+#ifdef ALT9225
+#include <Arduino_GFX_Library.h>
+#else
 #include <TFT22_ILI9225.h>
+#endif
 #include <U8x8lib.h>
 #include <SPIFFS.h>
+
+struct GpsPos {
+	double lat;
+	double lon;
+	int alt;
+	int course;
+	int accuracy;
+	int valid;
+};
+extern struct GpsPos gpsPos;
 
 #define WIDTH_AUTO 9999
 struct DispEntry {
@@ -85,12 +100,16 @@ public:
         void drawQS(uint8_t x, uint8_t y, uint8_t len, uint8_t size, uint8_t *stat, uint16_t fg=0xffff, uint16_t bg=0);
 };
 
+#ifdef ALT9225
+	typedef Arduino_GFX MY_ILI9225;
+#else
 class MY_ILI9225 : public TFT22_ILI9225 {
 	using TFT22_ILI9225::TFT22_ILI9225;
 public:
 	uint16_t drawGFXChar(int16_t x, int16_t y, unsigned char c, uint16_t color);
 	void drawTile(uint8_t x, uint8_t y, uint8_t cnt, uint8_t *tile_ptr);
 };
+#endif
 
 class ILI9225Display : public RawDisplay {
 private:
@@ -123,11 +142,8 @@ private:
 	static void circ(uint16_t *bm, int16_t w, int16_t x0, int16_t y0, int16_t r, uint16_t fg, boolean fill, uint16_t bg);
 	static int countEntries(File f);
 	void calcGPS();
-	boolean gpsValid;
-	float gpsLat, gpsLon;
-	int gpsAlt;
 	int gpsDist; // -1: invalid
-	int gpsCourse, gpsDir, gpsBear;   // 0..360; -1: invalid
+	int gpsDir, gpsBear;   // 0..360; -1: invalid
 	boolean gpsCourseOld;
 	static const int LINEBUFLEN{ 255 };
 	static char lineBuf[LINEBUFLEN];

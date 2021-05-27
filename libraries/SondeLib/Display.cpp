@@ -16,21 +16,21 @@ extern const char *version_id;
 #include <fonts/FreeSans9pt7b.h>
 #include <fonts/FreeSans12pt7b.h>
 #include <fonts/Picopixel.h>
+#include <fonts/Terminal11x16.h>
 
 extern Sonde sonde;
-
-extern MicroNMEA nmea;
 
 extern AXP20X_Class axp;
 extern bool axp192_found;
 extern SemaphoreHandle_t axpSemaphore;
 
+struct GpsPos gpsPos;
 
 SPIClass spiDisp(HSPI);
 
-const char *sondeTypeStr[NSondeTypes] = { "DFM ", "DFM9", "RS41", "RS92", "M10 ", "M20 ", "DFM6" };
-const char *sondeTypeLongStr[NSondeTypes] = { "DFM (all)", "DFM9 (old)", "RS41", "RS92", "M10 ", "M20 ", "DFM6 (old)" };
-const char sondeTypeChar[NSondeTypes] = { 'D', '9', '4', 'R', 'M', '2', '6' };
+const char *sondeTypeStr[NSondeTypes] = { "DFM ", "DFM9", "RS41", "RS92", "M10 ", "M20 ", "DFM6", "MP3H" };
+const char *sondeTypeLongStr[NSondeTypes] = { "DFM (all)", "DFM9 (old)", "RS41", "RS92", "M10 ", "M20 ", "DFM6 (old)", "MP3-H1" };
+const char sondeTypeChar[NSondeTypes] = { 'D', '9', '4', 'R', 'M', '2', '6', '3' };
 
 byte myIP_tiles[8*11];
 static uint8_t ap_tile[8]={0x00,0x04,0x22,0x92, 0x92, 0x22, 0x04, 0x00};
@@ -312,8 +312,14 @@ void U8x8Display::drawQS(uint8_t x, uint8_t y, uint8_t len, uint8_t /*size*/, ui
 
 
 const GFXfont *gfl[] = {
+#ifdef ALT9225
+	&Terminal11x16Font,		// 3 (replacement for 1 or 2 with old library)
+	&Terminal11x16Font,		// 4 (replacement for 1 or 2 with old library)
+#else
+	// nobody was using them, so removed with new library
 	&FreeMono9pt7b,		// 3
 	&FreeMono12pt7b,	// 4
+#endif
 	&FreeSans9pt7b,		// 5
 	&FreeSans12pt7b,	// 6
 	&Picopixel,             // 7
@@ -325,8 +331,13 @@ struct gfxoffset_t {
 // first value: offset: max offset from font glyphs (last column * (-1))   (check /, \, `, $)`
 // yclear:max height: max of (height in 3rd column) + (yofs + 6th column)  (check j)
 const struct gfxoffset_t gfxoffsets[]={
+#ifdef ALT9225
+        { 16, 18},
+        { 16, 18},
+#else
 	{ 11, 15 },  // 13+11-9 "j"
 	{ 15, 20 },  // 19+15-14
+#endif
         { 13, 18 },  // 17+13-12 "j" 
         { 17, 23 }, // 23+17-17
         {  4, 6},       // 6+4-4
@@ -337,25 +348,55 @@ static int ngfx = sizeof(gfl)/sizeof(GFXfont *);
 #define TFT_LED 0 // 0 if wired to +5V directly
 #define TFT_BRIGHTNESS 100 // Initial brightness of TFT backlight (optional)
 
+#ifdef ALT9225
+Arduino_DataBus *bus;
+#endif
+
 void ILI9225Display::begin() {
+#ifdef ALT9225
+	Serial.println("ILI9225 init (alt driver)");
+	bus = new Arduino_ESP32SPI( sonde.config.tft_rs, sonde.config.tft_cs,
+		sonde.config.oled_scl, sonde.config.oled_sda, -1, HSPI);
+	tft = new Arduino_ILI9225(bus, sonde.config.oled_rst);
+	Serial.println("ILI9225 init (alt driver): done");
+	tft->begin();
+	tft->setRotation(sonde.config.tft_orient);
+	tft->setTextWrap(false);
+#else
 	tft = new MY_ILI9225(sonde.config.oled_rst, sonde.config.tft_rs, sonde.config.tft_cs,
 			sonde.config.oled_sda, sonde.config.oled_scl, TFT_LED, TFT_BRIGHTNESS);
+	tft->setModeFlip(sonde.config.tft_modeflip);
         tft->begin(spiDisp);
 	tft->setOrientation(sonde.config.tft_orient);
+#endif
 }
 
 void ILI9225Display::clear() {
+#ifdef ALT9225
+	tft->fillScreen(0);
+#else
         tft->clear();
+#endif
 }
 
 // for now, 0=small=FreeSans9pt7b, 1=large=FreeSans18pt7b
 void ILI9225Display::setFont(uint8_t fontindex) {
+#ifdef ALT9225
+	if(fontindex==1 || fontindex==2) { fontindex=3; }
+#endif
 	findex = fontindex;
 	switch(fontindex) {
+#ifdef ALT9225
+	case 0: tft->setFont(NULL); tft->setTextSize(1); break;
+	case 1: tft->setFont(NULL); tft->setTextSize(2); break;
+	case 2: tft->setFont(NULL); tft->setTextSize(2); break;
+	default: tft->setFont(gfl[fontindex-3]);
+#else
 	case 0: tft->setFont(Terminal6x8); break;
 	case 1: tft->setFont(Terminal11x16); break;
 	case 2: tft->setFont(Terminal12x16); break;
 	default: tft->setGFXFont(gfl[fontindex-3]);
+#endif
 	}
 }
 
@@ -377,11 +418,21 @@ void ILI9225Display::getDispSize(uint8_t *height, uint8_t *width, uint8_t *lines
 		break;
 	default: // get size from GFX Font
 	{
+#ifdef ALT9225
+		int16_t x, y;
+		uint16_t w, h;
+		tft->getTextBounds("|", 0, 0, &x, &y, &w, &h);
+		if(lineskip) *lineskip = h+2;
+		tft->getTextBounds("A", 0, 0, &x, &y, &w, &h);
+		if(colskip) *colskip = w+2;
+		if(lineskip&&colskip) { Serial.printf("skip size from bounds: %d, %d\n", *lineskip, *colskip); }
+#else
 		int16_t w,h,a;
 		tft->getGFXCharExtent('|',&w,&h,&a);
 		if(lineskip) *lineskip = h+2;
 		tft->getGFXCharExtent('A',&w,&h,&a);
 		if(colskip) *colskip = w+2; // just an approximation
+#endif
 	}
 	}
 }
@@ -398,27 +449,62 @@ void ILI9225Display::drawString(uint8_t x, uint8_t y, const char *s, int16_t wid
 	// Standard font
 	if(findex<3) {
 		DebugPrintf(DEBUG_DISPLAY, "Simple Text %s at %d,%d [%d]\n", s, x, y, width); 
+#ifdef ALT9225
+		// for gpx fonts and new library, cursor is at baseline!!
+		int h = 6; if(findex>1) h=12;
+#else
 		tft->setBackgroundColor(bg);
 		int h = tft->getFont().height;
+#endif
 		if( alignright ) {
+#ifdef ALT9225
+			//w = tft->getTextWidth(s);
+			/// TODO
+			if( width==WIDTH_AUTO ) { width = w; }
+			if( width > w ) {
+				tft->writeFillRect(x, y, width - w, h - 1, bg);
+			}
+			tft->setCursor(x + width - w, y);
+			tft->setTextColor(fg, bg);
+			tft->print(s);
+#else
 			w = tft->getTextWidth(s);
 			if( width==WIDTH_AUTO ) { width = w; }
 			if( width > w ) {
 				tft->fillRectangle(x, y, x + width - w, y + h - 1, bg);
 			}
 			tft->drawText(x + width - w, y, s, fg);
+#endif
 		} else {
+#ifdef ALT9225
+			tft->setCursor(x, y);
+			tft->setTextColor(fg, bg);
+			tft->print(s);
+			// curx???
+			//i//int curx = tft->drawText(x, y, s, fg);
+			//if( width==WIDTH_AUTO ) { return; }
+			//if(curx < x + width) {
+        		//	tft->fillRectangle(curx, y, x + width - 1, y + h - 1, bg);
+			//}
+#else
 			int curx = tft->drawText(x, y, s, fg);
 			if( width==WIDTH_AUTO ) { return; }
 			if(curx < x + width) {
         			tft->fillRectangle(curx, y, x + width - 1, y + h - 1, bg);
 			}
+#endif
 		}
 		return;
 	}
 	// GFX font
-	if(width==WIDTH_AUTO || alignright) {
+	int16_t x1, y1;
+	if(1||width==WIDTH_AUTO || alignright) {
+#ifdef ALT9225
+		tft->getTextBounds(s, x, y + gfxoffsets[findex-3].yofs, &x1, &y1, (uint16_t *)&w, (uint16_t *)&h);
+		w += x1 - x + 1;
+#else
 		tft->getGFXTextExtent(s, x, y + gfxoffsets[findex-3].yofs, &w, &h);
+#endif
 		if(width==WIDTH_AUTO) { width=w; }
 		if(alignright) {
 			if(w > width) {
@@ -444,6 +530,22 @@ void ILI9225Display::drawString(uint8_t x, uint8_t y, const char *s, int16_t wid
 	}
 #else 
 	// Text by drawing bitmap.... => less "flicker"
+#ifdef ALT9225
+	//TODO
+	tft->setCursor( alignright? x+width-w : x, y + gfxoffsets[findex-3].yofs);
+	tft->setTextColor( fg, bg );
+	tft->print(s);
+	uint16_t height = gfxoffsets[findex-3].yclear;
+	if(alignright) {
+		// fill with bg from x+w to width
+		if(width>w) tft->fillRect( x, y, width-w, height, bg);
+		DebugPrintf(DEBUG_DISPLAY,"rtext fill %d %d %d %d -- %d %d\n", x, y, width-w, height, x1, y1);
+	} else {
+		// fill with bg from x+w to width
+		if(width>w) tft->fillRect( x+w, y, width-w, height, bg);
+		DebugPrintf(DEBUG_DISPLAY,"ltext fill %d %d %d %d -- %d %d\n", x+w, y, width-w, height, x1, y1);
+	}
+#else
 	uint16_t height = gfxoffsets[findex-3].yclear;
         uint16_t *bitmap = (uint16_t *)malloc(sizeof(uint16_t) * width * height);
 	if(!bitmap) {
@@ -465,10 +567,24 @@ void ILI9225Display::drawString(uint8_t x, uint8_t y, const char *s, int16_t wid
         drawBitmap(x, y, bitmap, width, height);
 	free(bitmap);
 #endif
+#endif
 }
 
 void ILI9225Display::drawTile(uint8_t x, uint8_t y, uint8_t cnt, uint8_t *tile_ptr) {
+#ifdef ALT9225
+        int i,j;
+        tft->startWrite();
+        for(i=0; i<cnt*8; i++) {
+                uint8_t v = tile_ptr[i];
+                for(j=0; j<8; j++) {
+                        tft->writePixel(8*x+i, 8*y+j, (v&0x01) ? GREEN:BLUE);
+                        v >>= 1;
+                }
+        }
+        tft->endWrite();
+#else
 	tft->drawTile(x, y, cnt, tile_ptr);
+#endif
 #if 0
 	int i,j;
 	tft->startWrite();
@@ -493,11 +609,19 @@ void ILI9225Display::drawTriangle(uint16_t x1, uint16_t y1, uint16_t x2, uint16_
 }
 
 void ILI9225Display::drawBitmap(uint16_t x1, uint16_t y1, const uint16_t* bitmap, int16_t w, int16_t h) {
+#ifdef ALT9225
+	tft->draw16bitRGBBitmap(x1, y1, bitmap, w, h);
+#else
 	tft->drawBitmap(x1, y1, bitmap, w, h);
+#endif
 }
 
 void ILI9225Display::welcome() {
+#ifdef ALT9225
+	tft->fillScreen(0);
+#else
 	tft->clear();
+#endif
         setFont(6);
         drawString(0, 0*22, version_name, WIDTH_AUTO, 0xff00);
         setFont(5);
@@ -544,6 +668,9 @@ void ILI9225Display::drawQS(uint8_t x, uint8_t y, uint8_t len, uint8_t size, uin
 #include <pgmspace.h>
 #define pgm_read_pointer(addr) ((void *)pgm_read_dword(addr))
 
+
+#ifdef ALT9225
+#else
 void MY_ILI9225::drawTile(uint8_t x, uint8_t y, uint8_t cnt, uint8_t *tile_ptr) {
         int i,j;
         startWrite();
@@ -592,6 +719,7 @@ uint16_t MY_ILI9225::drawGFXChar(int16_t x, int16_t y, unsigned char c, uint16_t
 
     return (uint16_t)xa;
 }
+#endif
 ///////////////
 
 
@@ -666,7 +794,7 @@ int Display::allocDispInfo(int entries, DispInfo *d, char *label)
 	d->timeouts = (int16_t *)mem;
 
 	d->label = label;
-	Serial.printf("allocated %d bytes (%d entries) for %p (addr=%p)\n", totalsize, entries, d, d->de);
+	Serial.printf("%s: alloc %d bytes (%d entries) for %p (addr=%p)\n", label, totalsize, entries, d, d->de);
 	return 0;
 }
 
@@ -727,7 +855,7 @@ void Display::parseDispElement(char *text, DispEntry *de)
 	case 'f':
 		de->func = disp.drawFreq;
 		de->extra = strdup(text+1);
-		Serial.printf("parsing 'f' entry: extra is '%s'\n", de->extra);
+		//Serial.printf("parsing 'f' entry: extra is '%s'\n", de->extra);
 		break;
 	case 'n':
 		// IP address / small always uses tiny font on TFT for backward compatibility
@@ -781,8 +909,8 @@ void Display::parseDispElement(char *text, DispEntry *de)
 			de->extra = (char *)circinfo;
 		} else {
 			de->extra = strdup(text+1);
+			//Serial.printf("parsing 'g' entry: extra is '%s'\n", de->extra);
 		}
-		Serial.printf("parsing 'g' entry: extra is '%s'\n", de->extra);
 		break;
 	case 'r':
 		de->func = disp.drawRSSI; break;
@@ -840,7 +968,7 @@ int Display::countEntries(File f) {
 		break;
 	}	
 	f.seek(pos, SeekSet);
-	Serial.printf("Counted %d entries\n", n);
+	//Serial.printf("Counted %d entries\n", n);
 	return n;
 }
 
@@ -849,7 +977,7 @@ void Display::initFromFile(int index) {
 	if(index>0) {
 		char file[20];
 		snprintf(file, 20, "/screens%d.txt", index);
-		Serial.printf("Trying %i (%s)\n", index, file);
+		Serial.printf("Reading %s\n", file);
 		d = SPIFFS.open(file, "r");
 		if(!d || d.available()==0 ) { Serial.printf("%s not found, using /screens.txt\n", file); }
 	}
@@ -889,6 +1017,7 @@ void Display::initFromFile(int index) {
 		case -1:	// wait for start of screen (@)
 			{
 			if(*s != '@') {
+				if(*s==0 || *s==10 || *s==13) continue;
 				Serial.printf("Illegal start of screen: %s\n", s);
 				continue;
 			}
@@ -897,7 +1026,6 @@ void Display::initFromFile(int index) {
 			DebugPrintf(DEBUG_SPARSER,"Reading entry with %d elements\n", entrysize);
 			idx++;
 			int res = allocDispInfo(entrysize, &newlayouts[idx], label);
-			Serial.printf("allocDispInfo: idx %d: label is %p - %s\n",idx,newlayouts[idx].label, newlayouts[idx].label);
 			if(res<0) {
 				Serial.println("Error allocating memory for disp info");
 				continue;
@@ -918,7 +1046,7 @@ void Display::initFromFile(int index) {
 				if(newlayouts[idx].timeouts[1]>0) newlayouts[idx].timeouts[1]*=1000;
 				if(newlayouts[idx].timeouts[2]>0) newlayouts[idx].timeouts[2]*=1000;
 				//sscanf(s+6, "%hd,%hd,%hd", newlayouts[idx].timeouts, newlayouts[idx].timeouts+1, newlayouts[idx].timeouts+2);
-				Serial.printf("timer values: %d, %d, %d\n", newlayouts[idx].timeouts[0], newlayouts[idx].timeouts[1], newlayouts[idx].timeouts[2]);
+				//Serial.printf("timer values: %d, %d, %d\n", newlayouts[idx].timeouts[0], newlayouts[idx].timeouts[1], newlayouts[idx].timeouts[2]);
 			} else if(strncmp(s, "key1action=",11)==0) { // key 1 actions
 				char c1,c2,c3,c4;
 				sscanf(s+11, "%c,%c,%c,%c", &c1, &c2, &c3, &c4);
@@ -933,7 +1061,7 @@ void Display::initFromFile(int index) {
 				newlayouts[idx].actions[6] = ACTION(c2);
 				newlayouts[idx].actions[7] = ACTION(c3);
 				newlayouts[idx].actions[8] = ACTION(c4);
-				Serial.printf("parsing key2action: %c %c %c %c\n", c1, c2, c3, c4);
+				//Serial.printf("parsing key2action: %c %c %c %c\n", c1, c2, c3, c4);
 			} else if(strncmp(s, "timeaction=",11)==0) { // timer actions
 				char c1,c2,c3;
 				sscanf(s+11, "%c,%c,%c", &c1, &c2, &c3);
@@ -971,9 +1099,11 @@ void Display::initFromFile(int index) {
 				what++;
 				newlayouts[idx].de[what].func = NULL;
 			} else {
+#if 0
 				for(int i=0; i<12; i++) {
 					Serial.printf("action %d: %d\n", i, (int)newlayouts[idx].actions[i]);
 				}
+#endif
  				what=-1;
 			}
 			break;
@@ -1233,6 +1363,7 @@ void Display::drawKilltimer(DispEntry *de) {
 extern int lastCourse; // from RX_FSK.ino
 void Display::calcGPS() {
 	// base data
+#if 0
 #if FAKEGPS
 	gpsValid = true;
 	gpsLat = 48.9;
@@ -1258,11 +1389,12 @@ static int tmpc=0;
 		}
 	}
 #endif
+#endif
 	// distance
-	if( gpsValid && (sonde.si()->validPos&0x03)==0x03 && (layout->usegps&GPSUSE_DIST)) {
-        	float lat1 = nmea.getLatitude()*0.000001;
+	if( gpsPos.valid && (sonde.si()->validPos&0x03)==0x03 && (layout->usegps&GPSUSE_DIST)) {
+        	float lat1 = gpsPos.lat;
         	float lat2 = sonde.si()->lat;
-        	float x = radians(nmea.getLongitude()*0.000001-sonde.si()->lon) * cos( radians((lat1+lat2)/2) );
+        	float x = radians(gpsPos.lon-sonde.si()->lon) * cos( radians((lat1+lat2)/2) );
         	float y = radians(lat2-lat1);
         	float d = sqrt(x*x+y*y)*EARTH_RADIUS;
 		gpsDist = (int)d;
@@ -1270,17 +1402,17 @@ static int tmpc=0;
 		gpsDist = -1;
 	}
 	// bearing
-	if( gpsValid && (sonde.si()->validPos&0x03)==0x03 && (layout->usegps&GPSUSE_BEARING)) {
-                float lat1 = radians(gpsLat);
+	if( gpsPos.valid && (sonde.si()->validPos&0x03)==0x03 && (layout->usegps&GPSUSE_BEARING)) {
+                float lat1 = radians(gpsPos.lat);
                 float lat2 = radians(sonde.si()->lat);
-                float lon1 = radians(gpsLon);
+                float lon1 = radians(gpsPos.lon);
                 float lon2 = radians(sonde.si()->lon);
                 float y = sin(lon2-lon1)*cos(lat2);
                 float x = cos(lat1)*sin(lat2) - sin(lat1)*cos(lat2)*cos(lon2-lon1);
                 float dir = atan2(y, x)/PI*180;
                 if(dir<0) dir+=360;
 		gpsDir = (int)dir;
-		gpsBear = gpsDir - gpsCourse;
+		gpsBear = gpsDir - gpsPos.course;
 		if(gpsBear < 0) gpsBear += 360;
 		if(gpsBear >= 360) gpsBear -= 360;
 	} else {
@@ -1288,39 +1420,39 @@ static int tmpc=0;
 		gpsBear = -1;
 	}
 	
-	DebugPrintf(DEBUG_DISPLAY, "GPS data: valid%d  GPS at %f,%f (alt=%d,cog=%d);  sonde at dist=%d, dir=%d rel.bear=%d\n",gpsValid?1:0,
-		gpsLat, gpsLon, gpsAlt, gpsCourse, gpsDist, gpsDir, gpsBear);
+	DebugPrintf(DEBUG_DISPLAY, "GPS data: valid%d  GPS at %f,%f (alt=%d,cog=%d);  sonde at dist=%d, dir=%d rel.bear=%d\n",gpsPos.valid?1:0,
+		gpsPos.lat, gpsPos.lon, gpsPos.alt, gpsPos.course, gpsDist, gpsDir, gpsBear);
 }
 
 void Display::drawGPS(DispEntry *de) {
-	if(sonde.config.gps_rxd<0) return;
+	// TODO: FIXME: ??? if(sonde.config.gps_rxd<0) return;
 	rdis->setFont(de->fmt);
 	switch(de->extra[0]) {
 	case 'V':
 		{
 		// show if GPS location is valid
-		uint8_t *tile = disp.gpsValid?gps_tile:nogps_tile;
+		uint8_t *tile = gpsPos.valid?gps_tile:nogps_tile;
 		rdis->drawTile(de->x, de->y, 1, tile);
 		}
 		break;
 	case 'O':
 		// GPS long
-		snprintf(buf, 16, "%2.5f", disp.gpsLon);
+		snprintf(buf, 16, "%2.5f", gpsPos.lon);
 		drawString(de,buf);
 		break;
 	case 'A':
 		// GPS lat
-		snprintf(buf, 16, "%2.5f", disp.gpsLat);
+		snprintf(buf, 16, "%2.5f", gpsPos.lat);
 		drawString(de,buf);
 		break;
 	case 'H':
 		// GPS alt
-		snprintf(buf, 16, "%4dm", disp.gpsAlt);
+		snprintf(buf, 16, "%4dm", gpsPos.alt);
 		drawString(de,buf);
 		break;
 	case 'C':
 		// GPS Course over ground
-		snprintf(buf, 4, "%3d", disp.gpsCourse);
+		snprintf(buf, 4, "%3d", gpsPos.course);
 		drawString(de, buf);
 		break;
 	case 'D':
@@ -1330,7 +1462,7 @@ void Display::drawGPS(DispEntry *de) {
 		if( (sonde.si()->validPos&0x03)!=0x03 ) {
 			snprintf(buf, 16, "no pos ");
 			if(de->extra && *de->extra=='5') buf[5]=0;
-		} else if(!disp.gpsValid) {
+		} else if(!gpsPos.valid) {
 			snprintf(buf, 16, "no gps ");
 			if(de->extra && *de->extra=='5') buf[5]=0;
 		} else {
@@ -1350,7 +1482,7 @@ void Display::drawGPS(DispEntry *de) {
 		break;
 	case 'I':
 		// dIrection
-		if( (!disp.gpsValid) || ((sonde.si()->validPos&0x03)!=0x03 ) ) {
+		if( (!gpsPos.valid) || ((sonde.si()->validPos&0x03)!=0x03 ) ) {
 			drawString(de, "---");
 			break;
 		}
@@ -1362,7 +1494,7 @@ void Display::drawGPS(DispEntry *de) {
 		break;
 	case 'B':
 		// relative bearing
-		if( (!disp.gpsValid) || ((sonde.si()->validPos&0x03)!=0x03 ) ) {
+		if( (!gpsPos.valid) || ((sonde.si()->validPos&0x03)!=0x03 ) ) {
 			drawString(de, "---");
 			break;
 		}
@@ -1392,21 +1524,24 @@ void Display::drawGPS(DispEntry *de) {
 		bool rxgood = (sonde.si()->rxStat[0]==0);
 		int angN, angA, angB;   // angle of north, array, bullet
 		int validA, validB;     // 0: no, 1: yes, -1: old
-		if(circinfo->arr=='C') {  angA=disp.gpsCourse; validA=disp.gpsCourseOld?-1:1; }
+		if(circinfo->arr=='C') {  angA=gpsPos.course; validA=disp.gpsCourseOld?-1:1; }
 		else { angA=disp.gpsDir; validA=sonde.si()->validPos?(rxgood?1:-1):0; }
-		if(circinfo->bul=='C') {  angB=disp.gpsCourse; validB=disp.gpsCourseOld?-1:1; }
+		if(circinfo->bul=='C') {  angB=gpsPos.course; validB=disp.gpsCourseOld?-1:1; }
 		else { angB=disp.gpsDir; validB=sonde.si()->validPos?(rxgood?1:-1):0; }
 		if(circinfo->top=='N') {
 			angN = 0;
 		} else {
 			//if (circinfo->top=='C') {
-			angN = 360-disp.gpsCourse;
+			angN = 360-gpsPos.course;
 			angA += angN; if(angA>=360) angA-=360;
 			angB += angN; if(angB>=360) angB-=360;
 		}
 		Serial.printf("GPS0: %c%c%c N=%d, A=%d, B=%d\n", circinfo->top, circinfo->arr, circinfo->bul, angN, angA, angB);
 		// "N" in direction angN
+#ifdef ALT9225
+#else
 		static_cast<ILI9225Display *>(rdis)->tft->drawGFXcharBM(x0 + circinfo->radius*sin(angN*PI/180)-6, y0 - circinfo->radius*cos(angN*PI/180)+7, 'N', 0xffff, bitmap, size, size);
+#endif
 
 		// small circle in direction angB
 		if(validB) {
@@ -1474,7 +1609,7 @@ void Display::drawBatt(DispEntry *de) {
 		snprintf(buf, 30, "%.2f%s", val, de->extra+1);
 		break;
 	case 'T':
-		val = axp.getTemp()-144.7;  // WTF... library returns temperatur in K above -144.7°C!??
+		val = axp.getTemp();  // fixed in newer versions of libraray: -144.7 no longer needed here!
 		snprintf(buf, 30, "%.2f%s", val, de->extra+1);
 		break;
 	default:
