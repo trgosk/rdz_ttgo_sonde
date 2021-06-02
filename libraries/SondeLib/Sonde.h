@@ -248,7 +248,7 @@ typedef struct st_rdzconfig {
 } RDZConfig;
 
 
-#define MAXSONDE 99
+#define MAXSONDE 49
 
 extern int fingerprintValue[];
 extern const char *fingerprintText[];
